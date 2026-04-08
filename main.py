@@ -1,6 +1,21 @@
 import argparse
 import sys
 import traceback
+import socket
+
+# Patch DNS resolution for api.groq.com using hardcoded Cloudflare CDN IPs
+# (needed when local DNS server doesn't resolve Groq's domain properly)
+_original_getaddrinfo = socket.getaddrinfo
+_GROQ_IPS = ["104.18.38.236", "172.64.149.20"]
+_groq_ip_idx = [0]
+
+def _patched_getaddrinfo(host, port, *args, **kwargs):
+    if host == "api.groq.com":
+        ip = _GROQ_IPS[_groq_ip_idx[0] % len(_GROQ_IPS)]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (ip, port))]
+    return _original_getaddrinfo(host, port, *args, **kwargs)
+
+socket.getaddrinfo = _patched_getaddrinfo
 
 from agent.graph import agent
 
@@ -13,7 +28,11 @@ def main():
     args = parser.parse_args()
 
     try:
-        user_prompt = input("Enter your project prompt: ")
+        user_prompt = ""
+        while not user_prompt.strip():
+            user_prompt = input("Enter your project prompt: ")
+            if not user_prompt.strip():
+                print("Prompt cannot be empty. Please describe what you want to build.")
         result = agent.invoke(
             {"user_prompt": user_prompt},
             {"recursion_limit": args.recursion_limit}

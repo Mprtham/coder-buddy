@@ -1,5 +1,14 @@
+import sys
+import io
+
+# Fix Windows terminal Unicode encoding issues
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if sys.stderr.encoding and sys.stderr.encoding.lower() not in ('utf-8', 'utf8'):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 from dotenv import load_dotenv
-from langchain.globals import set_verbose, set_debug
+from langchain_core.globals import set_verbose, set_debug
 from langchain_groq.chat_models import ChatGroq
 from langgraph.constants import END
 from langgraph.graph import StateGraph
@@ -29,17 +38,22 @@ def planner_agent(state: dict) -> dict:
 
 
 def architect_agent(state: dict) -> dict:
-    """Creates TaskPlan from Plan."""
+    """Creates TaskPlan from Plan, with up to 3 retries on JSON parse errors."""
     plan: Plan = state["plan"]
-    resp = llm.with_structured_output(TaskPlan).invoke(
-        architect_prompt(plan=plan.model_dump_json())
-    )
-    if resp is None:
-        raise ValueError("Planner did not return a valid response.")
-
-    resp.plan = plan
-    print(resp.model_dump_json())
-    return {"task_plan": resp}
+    last_error = None
+    for attempt in range(3):
+        try:
+            resp = llm.with_structured_output(TaskPlan).invoke(
+                architect_prompt(plan=plan.model_dump_json())
+            )
+            if resp is None:
+                raise ValueError("Architect did not return a valid response.")
+            resp.plan = plan
+            return {"task_plan": resp}
+        except Exception as e:
+            last_error = e
+            print(f"Architect attempt {attempt + 1} failed: {type(e).__name__} — retrying...")
+    raise RuntimeError(f"Architect agent failed after 3 attempts: {last_error}")
 
 
 def coder_agent(state: dict) -> dict:

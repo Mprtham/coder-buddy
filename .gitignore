@@ -8,7 +8,18 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Environment variables — never commit secrets
 .env
+.env.local
+.env.production
+
+# Node
+node_modules/
+frontend/dist/
+
+# Runtime output
+generated_project/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
@@ -22,3 +33,10 @@ wheels/
 
 # System files
 .DS_Store
+Thumbs.db
+
+# Claude Code metadata
+.claude/
+
+# UV lock (optional — keep if you want reproducible installs)
+# uv.lock
