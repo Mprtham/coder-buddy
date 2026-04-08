@@ -180,19 +180,19 @@ The frontend automatically proxies `/api` requests to the backend at `http://loc
 
 ### 🔹 Frontend Deployment (Vercel)
 
-1. Push the `frontend/` folder to GitHub
-2. Import project in Vercel
-3. Set build command:
+1. Import the `Mprtham/coder-buddy` repo in Vercel
+2. Set Root Directory to `frontend`
+3. Vercel will auto-detect Vite — build command `npm run build` is set automatically
+4. Add environment variable in Vercel dashboard:
 
-```bash
-npm run build
-```
+   * `VITE_API_URL` → `https://your-backend.onrender.com` (your Render service URL)
 
-4. Update the API base URL in `frontend/src/services/api.js` for production:
+5. After deploying, copy your Vercel URL (e.g. `https://coder-buddy.vercel.app`)
+6. Go back to **Render → Environment** and add:
 
-```js
-const BASE = 'https://your-backend-url.onrender.com'
-```
+   * `ALLOWED_ORIGINS` → `https://coder-buddy.vercel.app`
+
+   Then redeploy the Render service so CORS allows your frontend origin.
 
 ---
 
