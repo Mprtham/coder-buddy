@@ -80,9 +80,19 @@ class ChatRequest(FBaseModel):
 
 # ── SSE helpers ───────────────────────────────────────────────────────────
 def _rate_limit_wait(exc: Exception) -> float:
-    """Extract suggested wait time from a Groq 429 error, default 20s."""
-    match = re.search(r'try again in (\d+\.?\d*)s', str(exc))
-    return float(match.group(1)) + 1.0 if match else 20.0
+    """Extract suggested wait time from a Groq 429 error, default 20s.
+    Handles formats: '10.2s', '4m21.36s', '1m30s'
+    """
+    msg = str(exc)
+    # e.g. "4m21.36s"
+    m = re.search(r'(\d+)m(\d+\.?\d*)s', msg)
+    if m:
+        return float(m.group(1)) * 60 + float(m.group(2)) + 1.0
+    # e.g. "10.2s"
+    m = re.search(r'try again in (\d+\.?\d*)s', msg)
+    if m:
+        return float(m.group(1)) + 1.0
+    return 20.0
 
 
 def _is_rate_limit(exc: Exception) -> bool:
