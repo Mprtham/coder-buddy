@@ -6,9 +6,11 @@ import io
 import json
 import os
 import queue
+import re
 import socket
 import sys
 import threading
+import time
 import zipfile
 
 # ── DNS patch for api.groq.com (Windows resolver workaround) ──────────────
@@ -77,6 +79,17 @@ class ChatRequest(FBaseModel):
 
 
 # ── SSE helpers ───────────────────────────────────────────────────────────
+def _rate_limit_wait(exc: Exception) -> float:
+    """Extract suggested wait time from a Groq 429 error, default 20s."""
+    match = re.search(r'try again in (\d+\.?\d*)s', str(exc))
+    return float(match.group(1)) + 1.0 if match else 20.0
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return '429' in msg or 'rate_limit_exceeded' in msg or 'rate limit' in msg
+
+
 def emit(q: queue.Queue, event_type: str, **data):
     q.put(json.dumps({"type": event_type, **data}))
 
@@ -98,27 +111,36 @@ def run_agent(prompt: str, q: queue.Queue):
         # ── Planner ──────────────────────────────────────────────────────
         emit(q, "agent_start", agent="Planner",
              message="Analyzing your request and creating a project plan…")
-        try:
-            plan: Plan = llm.with_structured_output(Plan).invoke(planner_prompt(prompt))
-            if not plan:
-                raise ValueError("Planner returned no result")
-            emit(q, "agent_done", agent="Planner", data={
-                "name": plan.name,
-                "description": plan.description,
-                "techstack": plan.techstack,
-                "features": plan.features,
-                "files": [f.model_dump() for f in plan.files],
-            })
-        except Exception as exc:
-            emit(q, "error", message=f"Planner failed: {exc}")
-            q.put(None)
-            return
+        plan: Plan | None = None
+        for attempt in range(5):
+            try:
+                plan = llm.with_structured_output(Plan).invoke(planner_prompt(prompt))
+                if not plan:
+                    raise ValueError("Planner returned no result")
+                break
+            except Exception as exc:
+                if _is_rate_limit(exc) and attempt < 4:
+                    wait = _rate_limit_wait(exc)
+                    emit(q, "rate_limit", agent="Planner", wait=round(wait),
+                         message=f"Rate limit hit — retrying in {round(wait)}s…")
+                    time.sleep(wait)
+                else:
+                    emit(q, "error", message=f"Planner failed: {exc}")
+                    q.put(None)
+                    return
+        emit(q, "agent_done", agent="Planner", data={
+            "name": plan.name,
+            "description": plan.description,
+            "techstack": plan.techstack,
+            "features": plan.features,
+            "files": [f.model_dump() for f in plan.files],
+        })
 
         # ── Architect ─────────────────────────────────────────────────────
         emit(q, "agent_start", agent="Architect",
              message="Designing the implementation plan…")
         task_plan: TaskPlan | None = None
-        for attempt in range(3):
+        for attempt in range(5):
             try:
                 task_plan = llm.with_structured_output(TaskPlan).invoke(
                     architect_prompt(plan=plan.model_dump_json())
@@ -128,11 +150,17 @@ def run_agent(prompt: str, q: queue.Queue):
                 task_plan.plan = plan
                 break
             except Exception as exc:
-                if attempt == 2:
+                if _is_rate_limit(exc) and attempt < 4:
+                    wait = _rate_limit_wait(exc)
+                    emit(q, "rate_limit", agent="Architect", wait=round(wait),
+                         message=f"Rate limit hit — retrying in {round(wait)}s…")
+                    time.sleep(wait)
+                elif attempt < 4:
+                    emit(q, "retry", agent="Architect", attempt=attempt + 1)
+                else:
                     emit(q, "error", message=f"Architect failed: {exc}")
                     q.put(None)
                     return
-                emit(q, "retry", agent="Architect", attempt=attempt + 1)
 
         emit(q, "agent_done", agent="Architect", data={
             "steps": [s.model_dump() for s in task_plan.implementation_steps],
@@ -144,26 +172,36 @@ def run_agent(prompt: str, q: queue.Queue):
             emit(q, "agent_start", agent="Coder",
                  message=f"Writing {step.filepath}…",
                  step=idx + 1, total=len(steps), filepath=step.filepath)
-            try:
-                existing = read_file.run(step.filepath)
-                user_msg = (
-                    f"Task: {step.task_description}\n"
-                    f"File: {step.filepath}\n"
-                    f"Existing content:\n{existing}\n"
-                    "Use write_file(path, content) to save your changes."
-                )
-                react_agent = create_react_agent(llm, [read_file, write_file, list_files, get_current_directory])
-                react_agent.invoke({
-                    "messages": [
-                        {"role": "system", "content": coder_system_prompt()},
-                        {"role": "user", "content": user_msg},
-                    ]
-                })
-                content = read_file.run(step.filepath)
-                emit(q, "file_written", filepath=step.filepath, content=content,
-                     step=idx + 1, total=len(steps))
-            except Exception as exc:
-                emit(q, "file_error", filepath=step.filepath, message=str(exc))
+            for attempt in range(5):
+                try:
+                    existing = read_file.run(step.filepath)
+                    user_msg = (
+                        f"Task: {step.task_description}\n"
+                        f"File: {step.filepath}\n"
+                        f"Existing content:\n{existing}\n"
+                        "Use write_file(path, content) to save your changes."
+                    )
+                    react_agent = create_react_agent(llm, [read_file, write_file, list_files, get_current_directory])
+                    react_agent.invoke({
+                        "messages": [
+                            {"role": "system", "content": coder_system_prompt()},
+                            {"role": "user", "content": user_msg},
+                        ]
+                    })
+                    content = read_file.run(step.filepath)
+                    emit(q, "file_written", filepath=step.filepath, content=content,
+                         step=idx + 1, total=len(steps))
+                    break
+                except Exception as exc:
+                    if _is_rate_limit(exc) and attempt < 4:
+                        wait = _rate_limit_wait(exc)
+                        emit(q, "rate_limit", agent="Coder", filepath=step.filepath,
+                             wait=round(wait),
+                             message=f"Rate limit hit — retrying {step.filepath} in {round(wait)}s…")
+                        time.sleep(wait)
+                    else:
+                        emit(q, "file_error", filepath=step.filepath, message=str(exc))
+                        break
 
         # ── Collect all files ─────────────────────────────────────────────
         files = []
