@@ -24,7 +24,7 @@ _ = load_dotenv()
 set_debug(True)
 set_verbose(True)
 
-llm = ChatCerebras(model="llama3.3-70b", api_key=os.getenv("CEREBRAS_API_KEY"))
+llm = ChatCerebras(model="llama3.1-70b", api_key=os.getenv("CEREBRAS_API_KEY"))
 
 
 def planner_agent(state: dict) -> dict:

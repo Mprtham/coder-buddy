@@ -39,7 +39,7 @@ from agent.tools import (
 set_verbose(False)
 set_debug(False)
 
-llm = ChatCerebras(model="llama3.3-70b", api_key=os.getenv("CEREBRAS_API_KEY"))
+llm = ChatCerebras(model="llama3.1-70b", api_key=os.getenv("CEREBRAS_API_KEY"))
 
 # ── FastAPI app ───────────────────────────────────────────────────────────
 app = FastAPI(title="Coder Buddy API", version="1.0.0")
