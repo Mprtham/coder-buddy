@@ -1,3 +1,4 @@
+import os
 import sys
 import io
 
@@ -23,7 +24,7 @@ _ = load_dotenv()
 set_debug(True)
 set_verbose(True)
 
-llm = ChatCerebras(model="llama-3.3-70b")
+llm = ChatCerebras(model="llama-3.3-70b", api_key=os.getenv("CEREBRAS_API_KEY"))
 
 
 def planner_agent(state: dict) -> dict:
