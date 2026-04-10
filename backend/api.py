@@ -27,13 +27,12 @@ from pydantic import BaseModel as FBaseModel
 
 from langchain_core.globals import set_verbose, set_debug
 from langchain_groq import ChatGroq
-from langgraph.prebuilt import create_react_agent
 
 from agent.states import Plan, TaskPlan
-from agent.prompts import planner_prompt, architect_prompt, coder_system_prompt
+from agent.prompts import planner_prompt, architect_prompt, coder_file_prompt
 from agent.tools import (
     write_file, read_file, get_current_directory,
-    list_files, PROJECT_ROOT, init_project_root,
+    list_files, PROJECT_ROOT, init_project_root, safe_write_file,
 )
 
 set_verbose(False)
@@ -213,38 +212,46 @@ def run_agent(prompt: str, q: queue.Queue):
             "steps": [s.model_dump() for s in task_plan.implementation_steps],
         })
 
-        # ── Pre-check: ensure all directories exist ───────────────────────
-        steps = task_plan.implementation_steps
-        for step in steps:
+        # ── Pre-check: deduplicate + ensure all directories exist ─────────
+        import pathlib as _pl
+        seen_paths: set[str] = set()
+        unique_steps = []
+        for step in task_plan.implementation_steps:
             clean_path = step.filepath.lstrip("/\\")
             step.filepath = clean_path
-            import pathlib as _pl
-            target = PROJECT_ROOT / clean_path
-            target.parent.mkdir(parents=True, exist_ok=True)
+            if clean_path not in seen_paths:
+                seen_paths.add(clean_path)
+                unique_steps.append(step)
+                target = PROJECT_ROOT / clean_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+        steps = unique_steps
 
         # ── Coder ─────────────────────────────────────────────────────────
+        written_files: list[str] = []
         for idx, step in enumerate(steps):
             emit(q, "agent_start", agent="Coder",
                  message=f"Writing {step.filepath}…",
                  step=idx + 1, total=len(steps), filepath=step.filepath)
             for attempt in range(5):
                 try:
-                    existing = read_file.run(step.filepath)
-                    user_msg = (
-                        f"Task: {step.task_description}\n"
-                        f"File: {step.filepath}\n"
-                        f"Existing content:\n{existing}\n"
-                        "Use write_file(path, content) to save your changes."
+                    existing_summary = ", ".join(written_files) if written_files else "None yet"
+                    prompt_msg = coder_file_prompt(
+                        filepath=step.filepath,
+                        task_description=step.task_description,
+                        existing_files=existing_summary,
                     )
-                    react_agent = create_react_agent(llm, [read_file, write_file, list_files, get_current_directory])
-                    react_agent.invoke({
-                        "messages": [
-                            {"role": "system", "content": coder_system_prompt()},
-                            {"role": "user", "content": user_msg},
-                        ]
-                    })
-                    content = read_file.run(step.filepath)
-                    emit(q, "file_written", filepath=step.filepath, content=content,
+                    response = llm.invoke(prompt_msg)
+                    raw = response.content if hasattr(response, "content") else str(response)
+                    # Strip markdown fences if model added them
+                    raw = raw.strip()
+                    if raw.startswith("```"):
+                        raw = "\n".join(raw.split("\n")[1:])
+                    if raw.endswith("```"):
+                        raw = "\n".join(raw.split("\n")[:-1])
+                    raw = raw.strip()
+                    safe_write_file(step.filepath, raw)
+                    written_files.append(step.filepath)
+                    emit(q, "file_written", filepath=step.filepath, content=raw,
                          step=idx + 1, total=len(steps))
                     break
                 except Exception as exc:

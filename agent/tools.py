@@ -62,3 +62,23 @@ def run_cmd(cmd: str, cwd: str = None, timeout: int = 30) -> Tuple[int, str, str
 def init_project_root():
     PROJECT_ROOT.mkdir(parents=True, exist_ok=True)
     return str(PROJECT_ROOT)
+
+
+def safe_write_file(path: str, content: str) -> str:
+    """Write content to a file, creating parent directories as needed."""
+    path = path.lstrip("/\\")
+    p = (PROJECT_ROOT / path).resolve()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(content)
+    return str(p)
+
+
+def safe_read_file(path: str) -> str:
+    """Read file content, return empty string if it doesn't exist."""
+    path = path.lstrip("/\\")
+    p = (PROJECT_ROOT / path).resolve()
+    if not p.exists():
+        return ""
+    with open(p, "r", encoding="utf-8") as f:
+        return f.read()

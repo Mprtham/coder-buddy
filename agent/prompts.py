@@ -13,18 +13,36 @@ def architect_prompt(plan: str) -> str:
 You are the ARCHITECT agent. Given this project plan, break it down into implementation tasks.
 
 RULES:
-- For each FILE in the plan, create one IMPLEMENTATION TASK.
+- Create EXACTLY ONE task per file. Do NOT repeat or duplicate any filepath.
 - Each task_description must be plain English prose only.
 - Do NOT include code snippets, backticks, arrow operators, or special characters in task_description.
 - Keep each task_description under 200 words.
 - Describe WHAT to implement in plain language: function names, class names, purpose, and dependencies.
 - Order tasks so dependencies come first.
 - File paths MUST be relative (e.g. "src/models.py" NOT "/src/models.py"). Never start a path with "/".
+- Each filepath must appear ONLY ONCE in the output.
 
 Project Plan:
 {plan}
     """
     return ARCHITECT_PROMPT
+
+
+def coder_file_prompt(filepath: str, task_description: str, existing_files: str) -> str:
+    return f"""You are an expert software engineer. Write the COMPLETE implementation for the file below.
+
+File to create: {filepath}
+Task: {task_description}
+
+Already created files in the project (for context/imports):
+{existing_files if existing_files else "None yet."}
+
+RULES:
+- Output ONLY the raw file content. No explanation, no markdown fences, no extra text.
+- Write complete, working, production-quality code.
+- Use correct imports based on the files already created.
+- Do not truncate or summarize — write the full file.
+"""
 
 
 def coder_system_prompt() -> str:
