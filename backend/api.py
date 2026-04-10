@@ -7,22 +7,10 @@ import json
 import os
 import queue
 import re
-import socket
 import sys
 import threading
 import time
 import zipfile
-
-# ── DNS patch for api.groq.com (Windows resolver workaround) ──────────────
-_orig_getaddrinfo = socket.getaddrinfo
-_GROQ_IPS = ["104.18.38.236", "172.64.149.20"]
-
-def _patched_getaddrinfo(host, port, *args, **kwargs):
-    if host == "api.groq.com":
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (_GROQ_IPS[0], port))]
-    return _orig_getaddrinfo(host, port, *args, **kwargs)
-
-socket.getaddrinfo = _patched_getaddrinfo
 
 # ── Ensure we always run from the project root ────────────────────────────
 PROJECT_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -38,7 +26,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel as FBaseModel
 
 from langchain_core.globals import set_verbose, set_debug
-from langchain_groq.chat_models import ChatGroq
+from langchain_cerebras import ChatCerebras
 from langgraph.prebuilt import create_react_agent
 
 from agent.states import Plan, TaskPlan
@@ -51,7 +39,7 @@ from agent.tools import (
 set_verbose(False)
 set_debug(False)
 
-llm = ChatGroq(model="openai/gpt-oss-120b")
+llm = ChatCerebras(model="llama-3.3-70b")
 
 # ── FastAPI app ───────────────────────────────────────────────────────────
 app = FastAPI(title="Coder Buddy API", version="1.0.0")

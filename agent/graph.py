@@ -9,7 +9,7 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() not in ('utf-8', 'utf8'):
 
 from dotenv import load_dotenv
 from langchain_core.globals import set_verbose, set_debug
-from langchain_groq.chat_models import ChatGroq
+from langchain_cerebras import ChatCerebras
 from langgraph.constants import END
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import create_react_agent
@@ -23,7 +23,7 @@ _ = load_dotenv()
 set_debug(True)
 set_verbose(True)
 
-llm = ChatGroq(model="openai/gpt-oss-120b")
+llm = ChatCerebras(model="llama-3.3-70b")
 
 
 def planner_agent(state: dict) -> dict:
