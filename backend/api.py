@@ -39,7 +39,13 @@ from agent.tools import (
 set_verbose(False)
 set_debug(False)
 
-llm = ChatGroq(model="llama-3.1-8b-instant")
+_groq_key = (
+    os.getenv("GROQ_API_KEY") or
+    os.getenv("Groq_API_Key") or
+    os.getenv("groq_api_key") or
+    ""
+)
+llm = ChatGroq(model="llama-3.1-8b-instant", api_key=_groq_key)
 
 # ── FastAPI app ───────────────────────────────────────────────────────────
 app = FastAPI(title="Coder Buddy API", version="1.0.0")
