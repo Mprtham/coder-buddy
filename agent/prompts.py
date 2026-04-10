@@ -19,6 +19,7 @@ RULES:
 - Keep each task_description under 200 words.
 - Describe WHAT to implement in plain language: function names, class names, purpose, and dependencies.
 - Order tasks so dependencies come first.
+- File paths MUST be relative (e.g. "src/models.py" NOT "/src/models.py"). Never start a path with "/".
 
 Project Plan:
 {plan}
