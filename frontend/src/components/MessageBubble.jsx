@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { User, Bot, AlertTriangle, Download, FolderOpen } from 'lucide-react'
+import { User, Bot, AlertTriangle, Download, FolderOpen, Rocket, Clock } from 'lucide-react'
 import { AgentCard, FileWrittenCard } from './AgentCard'
 
 function ThinkingIndicator() {
@@ -42,13 +43,101 @@ function UserBubble({ message }) {
   )
 }
 
-function AssistantBubble({ message }) {
+function ClarifyCard({ event, onSubmit }) {
+  const [answers, setAnswers] = useState({})
+  const [submitted, setSubmitted] = useState(false)
+
+  const toggle = (qId, option, multi) => {
+    setAnswers(prev => {
+      if (multi) {
+        const cur = prev[qId] ? prev[qId].split(', ') : []
+        const idx = cur.indexOf(option)
+        const next = idx >= 0 ? cur.filter(o => o !== option) : [...cur, option]
+        return { ...prev, [qId]: next.join(', ') }
+      }
+      return { ...prev, [qId]: option }
+    })
+  }
+
+  const isSelected = (qId, option, multi) => {
+    if (!answers[qId]) return false
+    if (multi) return answers[qId].split(', ').includes(option)
+    return answers[qId] === option
+  }
+
+  const canSubmit = event.questions.filter(q => !q.multi).every(q => answers[q.id])
+
+  const handleSubmit = () => {
+    if (!canSubmit || submitted) return
+    setSubmitted(true)
+    onSubmit?.(answers)
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="mt-2 space-y-4"
+    >
+      <p className="text-sm text-[#c8c8e8]">{event.message}</p>
+      {event.questions.map(q => (
+        <div key={q.id}>
+          <p className="text-xs font-medium text-[#8888a8] mb-2">{q.question}</p>
+          <div className="flex flex-wrap gap-2">
+            {q.options.map(opt => (
+              <button
+                key={opt}
+                disabled={submitted}
+                onClick={() => toggle(q.id, opt, q.multi)}
+                className={`px-3 py-1.5 rounded-full text-xs border transition-all ${
+                  isSelected(q.id, opt, q.multi)
+                    ? 'bg-[#6366f1] border-[#6366f1] text-white'
+                    : 'bg-[#1a1a28] border-[#2a2a40] text-[#8888a8] hover:border-[#6366f1]/50 hover:text-[#e8e8f5]'
+                }`}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+      {!submitted && (
+        <button
+          onClick={handleSubmit}
+          disabled={!canSubmit}
+          className={`mt-1 px-4 py-2 rounded-xl text-xs font-medium transition-all ${
+            canSubmit
+              ? 'bg-[#6366f1] hover:bg-[#4f46e5] text-white shadow-lg shadow-indigo-500/20'
+              : 'bg-[#2a2a40] text-[#55556b] cursor-not-allowed'
+          }`}
+        >
+          Generate my project →
+        </button>
+      )}
+      {submitted && (
+        <p className="text-xs text-indigo-400 animate-pulse">Building your project…</p>
+      )}
+    </motion.div>
+  )
+}
+
+function RateLimitBadge({ event }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 mb-2">
+      <Clock size={11} className="flex-shrink-0" />
+      <span>{event.message || `Rate limit — retrying in ${event.wait}s…`}</span>
+    </div>
+  )
+}
+
+function AssistantBubble({ message, onClarify }) {
   const events = message.events || []
   const hasEvents = events.length > 0
   const isDone = events.some(e => e.type === 'done')
   const hasError = !!message.error
   const doneEvent = events.find(e => e.type === 'done')
   const fileCount = doneEvent?.files?.length || 0
+  const clarifyEvent = events.find(e => e.type === 'clarify')
 
   // Group events: separate agent_start/done from file_written events
   const agentEvents = events.filter(e =>
@@ -57,6 +146,7 @@ function AssistantBubble({ message }) {
   const fileEvents = events.filter(e =>
     ['file_written', 'file_error'].includes(e.type)
   )
+  const rateLimitEvents = events.filter(e => e.type === 'rate_limit')
 
   // Build pairs of (start, done) per agent
   const agentPairs = []
@@ -100,6 +190,11 @@ function AssistantBubble({ message }) {
         {/* Thinking state */}
         {message.isStreaming && !hasEvents && <ThinkingIndicator />}
 
+        {/* Clarification questions */}
+        {clarifyEvent && (
+          <ClarifyCard event={clarifyEvent} onSubmit={onClarify} />
+        )}
+
         {/* Error state */}
         {hasError && (
           <div className="flex items-start gap-2.5 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-sm text-red-300 mb-3">
@@ -110,6 +205,11 @@ function AssistantBubble({ message }) {
             </div>
           </div>
         )}
+
+        {/* Rate limit badges */}
+        {rateLimitEvents.slice(-1).map((e, i) => (
+          <RateLimitBadge key={i} event={e} />
+        ))}
 
         {/* Agent cards */}
         {agentPairs.map((pair, i) => {
@@ -141,15 +241,15 @@ function AssistantBubble({ message }) {
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="mt-3 p-3 rounded-xl bg-[#1e1e2e] border border-[#2a2a40] flex items-center justify-between"
+            className="mt-3 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between"
           >
             <div className="flex items-center gap-2.5">
               <div className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
-                <FolderOpen size={13} className="text-emerald-400" />
+                <Rocket size={13} className="text-emerald-400" />
               </div>
               <div>
-                <p className="text-xs font-medium text-[#e8e8f5]">Project generated</p>
-                <p className="text-[10px] text-[#55556b]">{fileCount} file{fileCount !== 1 ? 's' : ''} ready</p>
+                <p className="text-xs font-medium text-emerald-300">Your project is ready 🚀</p>
+                <p className="text-[10px] text-emerald-400/60">{fileCount} file{fileCount !== 1 ? 's' : ''} generated</p>
               </div>
             </div>
             <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-medium">
@@ -163,9 +263,9 @@ function AssistantBubble({ message }) {
   )
 }
 
-export function MessageBubble({ message }) {
+export function MessageBubble({ message, onClarify }) {
   if (message.role === 'user') return <UserBubble message={message} />
-  return <AssistantBubble message={message} />
+  return <AssistantBubble message={message} onClarify={onClarify} />
 }
 
 function formatTime(ts) {

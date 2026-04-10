@@ -17,6 +17,7 @@ export default function App() {
     files,
     agentStatus,
     sendMessage,
+    submitClarification,
     stopGeneration,
     newChat,
   } = useChat()
@@ -88,6 +89,7 @@ export default function App() {
             agentStatus={agentStatus}
             onSend={sendMessage}
             onStop={stopGeneration}
+            onClarify={submitClarification}
           />
 
           <AnimatePresence>

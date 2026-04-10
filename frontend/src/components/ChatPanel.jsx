@@ -39,7 +39,7 @@ function AgentStatusBar({ status }) {
   )
 }
 
-export function ChatPanel({ messages, isStreaming, agentStatus, onSend, onStop }) {
+export function ChatPanel({ messages, isStreaming, agentStatus, onSend, onStop, onClarify }) {
   const bottomRef = useRef(null)
   const containerRef = useRef(null)
 
@@ -71,7 +71,7 @@ export function ChatPanel({ messages, isStreaming, agentStatus, onSend, onStop }
           <div className="max-w-3xl mx-auto px-4 pt-6 pb-2">
             <AnimatePresence initial={false}>
               {messages.map(m => (
-                <MessageBubble key={m.id} message={m} />
+                <MessageBubble key={m.id} message={m} onClarify={onClarify} />
               ))}
             </AnimatePresence>
             <div ref={bottomRef} className="h-1" />

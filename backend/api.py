@@ -70,6 +70,48 @@ app.add_middleware(
 
 class ChatRequest(FBaseModel):
     prompt: str
+    context: dict = {}   # carries clarification answers when provided
+
+
+# ── Intent classifier ────────────────────────────────────────────────────────
+_VAGUE_KEYWORDS = [
+    "website", "web app", "webapp", "portfolio", "landing page",
+    "app", "application", "dashboard", "platform", "saas",
+]
+_DETAIL_KEYWORDS = [
+    "with", "using", "that", "which", "python", "react", "fastapi",
+    "html", "css", "javascript", "flask", "node", "crud", "api",
+    "login", "auth", "database", "json", "sqlite", "todo", "expense",
+    "weather", "calculator", "game", "cli", "rest",
+]
+
+def _needs_clarification(prompt: str) -> bool:
+    """Return True if prompt is too vague to generate a good project."""
+    p = prompt.lower().strip()
+    words = p.split()
+    # Short and contains a vague keyword but no detail keywords
+    if len(words) <= 6:
+        has_vague = any(kw in p for kw in _VAGUE_KEYWORDS)
+        has_detail = any(kw in p for kw in _DETAIL_KEYWORDS)
+        return has_vague and not has_detail
+    return False
+
+
+def _friendly_error(exc: Exception) -> str:
+    """Convert raw exception messages into user-friendly text."""
+    msg = str(exc)
+    if "rate_limit" in msg.lower() or "429" in msg:
+        return "The AI service is currently busy. Please try again in a moment."
+    if "api_key" in msg.lower() or "authentication" in msg.lower():
+        return "Service configuration error. Please contact support."
+    if "tool_use_failed" in msg.lower() or "tool call" in msg.lower():
+        return "The AI had trouble with a task. Retrying automatically…"
+    if "json" in msg.lower() or "parse" in msg.lower():
+        return "The AI returned an unexpected response. Retrying…"
+    if "timeout" in msg.lower():
+        return "The request timed out. Please try again."
+    # Generic fallback — never show raw stack traces
+    return "Something went wrong while generating your project. Please try again."
 
 
 # ── SSE helpers ───────────────────────────────────────────────────────────
@@ -129,7 +171,7 @@ def run_agent(prompt: str, q: queue.Queue):
                          message=f"Rate limit hit — retrying in {round(wait)}s…")
                     time.sleep(wait)
                 else:
-                    emit(q, "error", message=f"Planner failed: {exc}")
+                    emit(q, "error", message=_friendly_error(exc))
                     q.put(None)
                     return
         emit(q, "agent_done", agent="Planner", data={
@@ -160,9 +202,10 @@ def run_agent(prompt: str, q: queue.Queue):
                          message=f"Rate limit hit — retrying in {round(wait)}s…")
                     time.sleep(wait)
                 elif attempt < 4:
-                    emit(q, "retry", agent="Architect", attempt=attempt + 1)
+                    emit(q, "retry", agent="Architect", attempt=attempt + 1,
+                         message="Retrying architecture design…")
                 else:
-                    emit(q, "error", message=f"Architect failed: {exc}")
+                    emit(q, "error", message=_friendly_error(exc))
                     q.put(None)
                     return
 
@@ -170,8 +213,16 @@ def run_agent(prompt: str, q: queue.Queue):
             "steps": [s.model_dump() for s in task_plan.implementation_steps],
         })
 
-        # ── Coder ─────────────────────────────────────────────────────────
+        # ── Pre-check: ensure all directories exist ───────────────────────
         steps = task_plan.implementation_steps
+        for step in steps:
+            clean_path = step.filepath.lstrip("/\\")
+            step.filepath = clean_path
+            import pathlib as _pl
+            target = PROJECT_ROOT / clean_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+
+        # ── Coder ─────────────────────────────────────────────────────────
         for idx, step in enumerate(steps):
             emit(q, "agent_start", agent="Coder",
                  message=f"Writing {step.filepath}…",
@@ -204,7 +255,8 @@ def run_agent(prompt: str, q: queue.Queue):
                              message=f"Rate limit hit — retrying {step.filepath} in {round(wait)}s…")
                         time.sleep(wait)
                     else:
-                        emit(q, "file_error", filepath=step.filepath, message=str(exc))
+                        emit(q, "file_error", filepath=step.filepath,
+                             message=f"Could not generate {step.filepath}. Continuing…")
                         break
 
         # ── Collect all files ─────────────────────────────────────────────
@@ -219,21 +271,78 @@ def run_agent(prompt: str, q: queue.Queue):
                         })
                     except Exception:
                         pass
-        emit(q, "done", files=files)
+        emit(q, "done", files=files,
+             message=f"Your project is ready 🚀 — {len(files)} file{'s' if len(files) != 1 else ''} generated.")
 
     except Exception as exc:
-        emit(q, "error", message=str(exc))
+        emit(q, "error", message=_friendly_error(exc))
     finally:
         q.put(None)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────
+def _build_enriched_prompt(prompt: str, context: dict) -> str:
+    """Merge original prompt with clarification answers."""
+    if not context:
+        return prompt
+    parts = [prompt]
+    if context.get("design"):
+        parts.append(f"Design style: {context['design']}")
+    if context.get("users"):
+        parts.append(f"Target users: {context['users']}")
+    if context.get("features"):
+        parts.append(f"Key features: {context['features']}")
+    if context.get("stack"):
+        parts.append(f"Tech stack preference: {context['stack']}")
+    return ". ".join(parts) + "."
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     if not req.prompt.strip():
         raise HTTPException(400, "Prompt cannot be empty")
+
+    # If context already provided (user answered clarification), skip check
+    if not req.context and _needs_clarification(req.prompt):
+        def _clarify_stream():
+            payload = json.dumps({
+                "type": "clarify",
+                "message": "Before I start building, let me ask a few quick questions to make it perfect for you.",
+                "questions": [
+                    {
+                        "id": "design",
+                        "question": "What design style would you like?",
+                        "options": ["Classy — clean & elegant", "Flashy — animations & modern UI", "Minimal — simple & fast", "Corporate — professional"],
+                    },
+                    {
+                        "id": "users",
+                        "question": "Who are your target users?",
+                        "options": ["Just me (personal use)", "Small team", "General public", "Businesses / clients"],
+                    },
+                    {
+                        "id": "features",
+                        "question": "Any must-have features?",
+                        "options": ["User login / authentication", "Data storage / database", "Charts & analytics", "Mobile-friendly (responsive)"],
+                        "multi": True,
+                    },
+                    {
+                        "id": "stack",
+                        "question": "Preferred tech stack? (optional)",
+                        "options": ["Python + Flask/FastAPI", "React + Node.js", "Plain HTML/CSS/JS", "No preference"],
+                    },
+                ],
+            })
+            yield f"data: {payload}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(
+            _clarify_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    enriched = _build_enriched_prompt(req.prompt, req.context)
     q: queue.Queue = queue.Queue()
-    threading.Thread(target=run_agent, args=(req.prompt, q), daemon=True).start()
+    threading.Thread(target=run_agent, args=(enriched, q), daemon=True).start()
     return StreamingResponse(
         sse_stream(q),
         media_type="text/event-stream",

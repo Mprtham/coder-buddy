@@ -19,6 +19,8 @@ export function useChat() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [files, setFiles] = useState([])
   const [agentStatus, setAgentStatus] = useState(null)
+  // Clarification state
+  const [pendingClarify, setPendingClarify] = useState(null) // { prompt, questions, aiId }
   const abortRef = useRef(null)
 
   const updateMsg = useCallback((id, fn) => {
@@ -28,6 +30,16 @@ export function useChat() {
   const handleEvent = useCallback(
     (event, aiId) => {
       switch (event.type) {
+        case 'clarify':
+          setPendingClarify(prev => ({ ...prev, questions: event.questions, aiId }))
+          updateMsg(aiId, m => ({
+            ...m,
+            events: [...m.events, event],
+            isStreaming: false,
+          }))
+          setIsStreaming(false)
+          break
+
         case 'agent_start':
           setAgentStatus({
             agent: event.agent,
@@ -41,6 +53,11 @@ export function useChat() {
 
         case 'agent_done':
         case 'retry':
+          updateMsg(aiId, m => ({ ...m, events: [...m.events, event] }))
+          break
+
+        case 'rate_limit':
+          setAgentStatus(prev => prev ? { ...prev, message: event.message } : null)
           updateMsg(aiId, m => ({ ...m, events: [...m.events, event] }))
           break
 
@@ -89,10 +106,8 @@ export function useChat() {
     [updateMsg]
   )
 
-  const sendMessage = useCallback(
-    async prompt => {
-      if (isStreaming || !prompt.trim()) return
-
+  const _doSend = useCallback(
+    async (prompt, context = {}) => {
       const controller = new AbortController()
       abortRef.current = controller
 
@@ -105,7 +120,6 @@ export function useChat() {
         { id: aiId, role: 'assistant', events: [], isStreaming: true, ts: new Date() },
       ])
 
-      // Update history
       if (!currentChatId) {
         const chatId = uid()
         setCurrentChatId(chatId)
@@ -121,18 +135,21 @@ export function useChat() {
 
       setIsStreaming(true)
       setAgentStatus(null)
+      // Store prompt for potential clarification follow-up
+      setPendingClarify({ prompt, context, questions: null, aiId })
 
       try {
         await streamChat(prompt, {
           onEvent: e => handleEvent(e, aiId),
           signal: controller.signal,
+          context,
         })
       } catch (err) {
         if (err.name !== 'AbortError') {
           updateMsg(aiId, m => ({
             ...m,
             isStreaming: false,
-            error: err.message,
+            error: 'Connection error. Please check your internet and try again.',
           }))
         }
       } finally {
@@ -141,7 +158,27 @@ export function useChat() {
         updateMsg(aiId, m => ({ ...m, isStreaming: false }))
       }
     },
-    [isStreaming, currentChatId, handleEvent, updateMsg]
+    [currentChatId, handleEvent, updateMsg]
+  )
+
+  const sendMessage = useCallback(
+    async prompt => {
+      if (isStreaming || !prompt.trim()) return
+      setPendingClarify(null)
+      await _doSend(prompt, {})
+    },
+    [isStreaming, _doSend]
+  )
+
+  // Called when user submits clarification answers
+  const submitClarification = useCallback(
+    async (answers) => {
+      if (isStreaming || !pendingClarify?.prompt) return
+      const { prompt } = pendingClarify
+      setPendingClarify(null)
+      await _doSend(prompt, answers)
+    },
+    [isStreaming, pendingClarify, _doSend]
   )
 
   const stopGeneration = useCallback(() => {
@@ -153,6 +190,7 @@ export function useChat() {
     setFiles([])
     setCurrentChatId(null)
     setAgentStatus(null)
+    setPendingClarify(null)
   }, [])
 
   return {
@@ -162,7 +200,9 @@ export function useChat() {
     isStreaming,
     files,
     agentStatus,
+    pendingClarify,
     sendMessage,
+    submitClarification,
     stopGeneration,
     newChat,
     EXAMPLE_PROMPTS,
