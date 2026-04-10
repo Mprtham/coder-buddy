@@ -26,7 +26,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel as FBaseModel
 
 from langchain_core.globals import set_verbose, set_debug
-from langchain_cerebras import ChatCerebras
+from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
 from agent.states import Plan, TaskPlan
@@ -39,7 +39,11 @@ from agent.tools import (
 set_verbose(False)
 set_debug(False)
 
-llm = ChatCerebras(model="llama3.1-70b", api_key=os.getenv("CEREBRAS_API_KEY"))
+llm = ChatOpenAI(
+    model="llama3.1-70b",
+    api_key=os.getenv("CEREBRAS_API_KEY"),
+    base_url="https://api.cerebras.ai/v1",
+)
 
 # ── FastAPI app ───────────────────────────────────────────────────────────
 app = FastAPI(title="Coder Buddy API", version="1.0.0")
